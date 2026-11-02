@@ -1,0 +1,12 @@
+#ifndef TONE_H
+#define TONE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+void tone_init(uint32_t clock_hz, volatile const uint32_t *milliseconds);
+void tone(uint32_t frequency_hz, uint32_t duration_ms);
+bool tone_finished(void);
+void tone_stop(void);
+
+#endif

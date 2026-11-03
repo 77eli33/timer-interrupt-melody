@@ -1,50 +1,60 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define PART_TM4C129ENCPDT
+#include "inc/hw_ints.h"
 #include "inc/hw_memmap.h"
 #include "driverlib/gpio.h"
-// pin_map.h selects names using the part macro; PlatformIO sets only the MCU name.
-#define PART_TM4C129ENCPDT
-#include "driverlib/pin_map.h"
-#include "driverlib/pwm.h"
+#include "driverlib/interrupt.h"
 #include "driverlib/sysctl.h"
+#include "driverlib/timer.h"
 
 #include "tone.h"
 
-#define PWM_CLOCK_DIVISOR 16u
-#define PWM_MIN_PERIOD_TICKS 2u
-#define PWM_MAX_PERIOD_TICKS UINT16_MAX
+#define TIMER_MIN_PERIOD_TICKS 2u
 
-// BOOSTXL-EDUMKII on BoosterPack 2: buzzer J4.40 = PG1/M0PWM5.
+// BOOSTXL-EDUMKII on BoosterPack 2: buzzer J4.40 = PG1.
 #define BUZZER_PORT GPIO_PORTG_BASE
 #define BUZZER_PIN GPIO_PIN_1
 
-static uint32_t pwm_clock_hz;
+static uint32_t timer_clock_hz;
 static volatile const uint32_t *milliseconds;
 static uint32_t tone_started_ms;
 static uint32_t tone_duration_ms;
+static volatile bool tone_active;
+
+void Timer5A_Handler(void) {
+    TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
+    if (!tone_active) return;
+
+    const uint8_t level = (uint8_t)GPIOPinRead(BUZZER_PORT, BUZZER_PIN);
+    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, level ^ BUZZER_PIN);
+}
 
 void tone_stop(void) {
-    PWMOutputState(PWM0_BASE, PWM_OUT_5_BIT, false);
-    PWMGenDisable(PWM0_BASE, PWM_GEN_2);
-    GPIOPinTypeGPIOOutput(BUZZER_PORT, BUZZER_PIN);
+    tone_active = false;
+    TimerDisable(TIMER5_BASE, TIMER_A);
+    TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
+    IntPendClear(INT_TIMER5A);
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
 }
 
 void tone_init(uint32_t clock_hz, volatile const uint32_t *time_ms) {
-    pwm_clock_hz = clock_hz / PWM_CLOCK_DIVISOR;
+    timer_clock_hz = clock_hz;
     milliseconds = time_ms;
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOG);
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM0);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER5);
     while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOG) ||
-           !SysCtlPeripheralReady(SYSCTL_PERIPH_PWM0)) {}
-    PWMClockSet(PWM0_BASE, PWM_SYSCLK_DIV_16);
-    PWMGenConfigure(PWM0_BASE, PWM_GEN_2,
-                    PWM_GEN_MODE_DOWN | PWM_GEN_MODE_NO_SYNC);
+           !SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER5)) {}
+    GPIOPinTypeGPIOOutput(BUZZER_PORT, BUZZER_PIN);
+    TimerClockSourceSet(TIMER5_BASE, TIMER_CLOCK_SYSTEM);
+    TimerConfigure(TIMER5_BASE, TIMER_CFG_PERIODIC);
     tone_stop();
+    TimerIntEnable(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
+    IntEnable(INT_TIMER5A);
 }
 
-// Start a hardware PWM tone without blocking. Frequency 0 is a timed rest.
+// Timer5A toggles PG1 every half period. Frequency 0 is a timed rest.
 void tone(uint32_t frequency_hz, uint32_t duration_ms) {
     tone_started_ms = *milliseconds;
     tone_duration_ms = duration_ms;
@@ -52,16 +62,13 @@ void tone(uint32_t frequency_hz, uint32_t duration_ms) {
 
     if (frequency_hz == 0u || duration_ms == 0u) return;
 
-    const uint32_t period_ticks = pwm_clock_hz / frequency_hz;
-    if (period_ticks < PWM_MIN_PERIOD_TICKS ||
-        period_ticks > PWM_MAX_PERIOD_TICKS) return;
+    const uint32_t half_period_ticks = timer_clock_hz / frequency_hz / 2u;
+    if (half_period_ticks < TIMER_MIN_PERIOD_TICKS) return;
 
-    PWMGenPeriodSet(PWM0_BASE, PWM_GEN_2, period_ticks);
-    PWMPulseWidthSet(PWM0_BASE, PWM_OUT_5, period_ticks / 2u);
-    GPIOPinConfigure(GPIO_PG1_M0PWM5);
-    GPIOPinTypePWM(BUZZER_PORT, BUZZER_PIN);
-    PWMGenEnable(PWM0_BASE, PWM_GEN_2);
-    PWMOutputState(PWM0_BASE, PWM_OUT_5_BIT, true);
+    TimerLoadSet(TIMER5_BASE, TIMER_A, half_period_ticks - 1u);
+    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, BUZZER_PIN);
+    tone_active = true;
+    TimerEnable(TIMER5_BASE, TIMER_A);
 }
 
 bool tone_finished(void) {

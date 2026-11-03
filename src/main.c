@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#define PART_TM4C129ENCPDT
+#include "inc/hw_ints.h"
 #include "driverlib/interrupt.h"
 #include "driverlib/sysctl.h"
 #include "driverlib/systick.h"
@@ -44,7 +46,8 @@ const uintptr_t vectors[] = {
     (uintptr_t)Default_Handler, (uintptr_t)Default_Handler,
     (uintptr_t)Default_Handler, 0, 0, 0, 0,
     (uintptr_t)Default_Handler, (uintptr_t)Default_Handler, 0,
-    (uintptr_t)Default_Handler, (uintptr_t)SysTick_Handler
+    (uintptr_t)Default_Handler, (uintptr_t)SysTick_Handler,
+    [INT_TIMER5A] = (uintptr_t)Timer5A_Handler
 };
 
 void Reset_Handler(void) {
@@ -59,6 +62,7 @@ void SysTick_Handler(void) {
 }
 
 int main(void) {
+    // Board enable
     const uint32_t system_clock_hz =
         SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |
                            SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,

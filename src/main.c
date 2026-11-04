@@ -7,27 +7,50 @@
 #include "driverlib/gpio.h"
 #include "driverlib/interrupt.h"
 #include "driverlib/sysctl.h"
+#include "driverlib/systick.h"
 #include "driverlib/timer.h"
+#include "buttons.h"
+#include "tone.h"
 
 #define SYSTEM_CLOCK_HZ 120000000u
-#define TEST_FREQUENCY_HZ 1000u
+#define MILLISECONDS_PER_SECOND 1000u
+#define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 #define BUZZER_PORT GPIO_PORTG_BASE
 #define BUZZER_PIN GPIO_PIN_1
+
+typedef struct {
+    uint32_t frequency_hz;
+    uint32_t duration_ms;
+} MelodyNote;
+
+static const MelodyNote test_melody[] = {
+    {1047u, 250u}, {1319u, 250u}, {1568u, 250u}, {2093u, 500u}
+};
+
+uint32_t system_clock_hz;
+static volatile uint32_t milliseconds;
 
 extern uint32_t _estack, _sidata, _sdata, _edata, _sbss, _ebss;
 int main(void);
 void Reset_Handler(void);
+void SysTick_Handler(void);
 static void TestTimer5A_Handler(void);
 static void Default_Handler(void) { while (1) {} }
 
 __attribute__((section(".isr_vector"), used))
 const uintptr_t vectors[] = {
-    (uintptr_t)&_estack, (uintptr_t)Reset_Handler,
-    (uintptr_t)Default_Handler, (uintptr_t)Default_Handler,
-    (uintptr_t)Default_Handler, (uintptr_t)Default_Handler,
-    (uintptr_t)Default_Handler, 0, 0, 0, 0,
-    (uintptr_t)Default_Handler, (uintptr_t)Default_Handler, 0,
-    (uintptr_t)Default_Handler, (uintptr_t)Default_Handler,
+    [0] = (uintptr_t)&_estack,
+    [1] = (uintptr_t)Reset_Handler,
+    [2] = (uintptr_t)Default_Handler,
+    [3] = (uintptr_t)Default_Handler,
+    [4] = (uintptr_t)Default_Handler,
+    [5] = (uintptr_t)Default_Handler,
+    [6] = (uintptr_t)Default_Handler,
+    [11] = (uintptr_t)Default_Handler,
+    [12] = (uintptr_t)Default_Handler,
+    [14] = (uintptr_t)Default_Handler,
+    [15] = (uintptr_t)SysTick_Handler,
+    [INT_TIMER4A] = (uintptr_t)ToneDuration_Handler,
     [INT_TIMER5A] = (uintptr_t)TestTimer5A_Handler
 };
 
@@ -44,30 +67,59 @@ static void TestTimer5A_Handler(void) {
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, level ^ BUZZER_PIN);
 }
 
+void SysTick_Handler(void) {
+    ++milliseconds;
+}
+
 int main(void) {
-    const uint32_t system_clock_hz =
-        SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |
-                           SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,
-                           SYSTEM_CLOCK_HZ);
+    system_clock_hz = SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |
+                                        SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,
+                                        SYSTEM_CLOCK_HZ);
     if (system_clock_hz == 0u) while (1) {}
 
+    // GPIO und Timer initialisieren
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOG);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER4);
     SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER5);
     while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOG) ||
+           !SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER4) ||
            !SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER5)) {}
 
     GPIOPinTypeGPIOOutput(BUZZER_PORT, BUZZER_PIN);
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
 
+    // Timer für Frequenz und Dauer konfigurieren
     TimerClockSourceSet(TIMER5_BASE, TIMER_CLOCK_SYSTEM);
     TimerConfigure(TIMER5_BASE, TIMER_CFG_PERIODIC);
-    const uint32_t half_period_ticks = system_clock_hz / (2u * TEST_FREQUENCY_HZ);
-    TimerLoadSet(TIMER5_BASE, TIMER_A, half_period_ticks - 1u);
-    TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
-    TimerIntEnable(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
-    IntEnable(INT_TIMER5A);
-    IntMasterEnable();
-    TimerEnable(TIMER5_BASE, TIMER_A);
+    TimerClockSourceSet(TIMER4_BASE, TIMER_CLOCK_SYSTEM);
+    TimerConfigure(TIMER4_BASE, TIMER_CFG_ONE_SHOT);
 
-    while (1) {}
+    buttons_init();
+    SysTickPeriodSet(system_clock_hz / MILLISECONDS_PER_SECOND);
+    SysTickIntEnable();
+    SysTickEnable();
+    IntMasterEnable();
+
+    uint32_t started_index = 0u;
+    bool playing = false;
+
+    while (1) {
+        const uint32_t pressed = buttons_poll(milliseconds);
+        if ((pressed & BUTTON_S1_PRESSED) != 0u) {
+            tone(0u, 0u);
+            note_index = 0u;
+            started_index = 0u;
+            playing = true;
+            tone(test_melody[0].frequency_hz, test_melody[0].duration_ms);
+        } else if (playing && note_index != started_index) {
+            started_index = note_index;
+            if (started_index < ARRAY_LENGTH(test_melody)) {
+                tone(test_melody[started_index].frequency_hz,
+                     test_melody[started_index].duration_ms);
+            } else {
+                playing = false;
+                tone(0u, 0u);
+            }
+        }
+    }
 }

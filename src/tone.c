@@ -17,6 +17,8 @@
 #define BUZZER_PORT GPIO_PORTG_BASE
 #define BUZZER_PIN GPIO_PIN_1
 
+volatile uint32_t note_index;
+
 static uint32_t timer_clock_hz;
 static volatile const uint32_t *milliseconds;
 static uint32_t tone_started_ms;
@@ -31,13 +33,21 @@ void Timer5A_Handler(void) {
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, level ^ BUZZER_PIN);
 }
 
+void ToneDuration_Handler(void) {
+    TimerIntClear(TIMER4_BASE, TIMER_TIMA_TIMEOUT);
+    TimerDisable(TIMER5_BASE, TIMER_A);
+    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
+    ++note_index;
+}
+
+/*
 void tone_stop(void) {
     tone_active = false;
     TimerDisable(TIMER5_BASE, TIMER_A);
     TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
     IntPendClear(INT_TIMER5A);
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
-}
+}*/
 
 void tone_init(uint32_t clock_hz, volatile const uint32_t *time_ms) {
     timer_clock_hz = clock_hz;
@@ -54,8 +64,8 @@ void tone_init(uint32_t clock_hz, volatile const uint32_t *time_ms) {
     IntEnable(INT_TIMER5A);
 }
 
-// Timer5A toggles PG1 every half period. Frequency 0 is a timed rest.
-void tone(uint32_t frequency_hz, uint32_t duration_ms) {
+// Earlier version with a note duration, kept for comparison during the test.
+/*void tone(uint32_t frequency_hz, uint32_t duration_ms) {
     tone_started_ms = *milliseconds;
     tone_duration_ms = duration_ms;
     tone_stop();
@@ -68,6 +78,34 @@ void tone(uint32_t frequency_hz, uint32_t duration_ms) {
     TimerLoadSet(TIMER5_BASE, TIMER_A, half_period_ticks - 1u);
     GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, BUZZER_PIN);
     tone_active = true;
+    TimerEnable(TIMER5_BASE, TIMER_A);
+}*/
+
+void tone(uint32_t frequency_hz, uint32_t duration_ms) {
+    TimerDisable(TIMER4_BASE, TIMER_A);
+    TimerDisable(TIMER5_BASE, TIMER_A);
+    TimerIntClear(TIMER4_BASE, TIMER_TIMA_TIMEOUT);
+    TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
+    IntPendClear(INT_TIMER4A);
+    IntPendClear(INT_TIMER5A);
+    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
+
+    if (frequency_hz == 0u || duration_ms == 0u) return;
+
+    const uint32_t half_period_ticks = system_clock_hz / frequency_hz / 2u;
+    const uint32_t ticks_per_ms = system_clock_hz / 1000u;
+    if (half_period_ticks < TIMER_MIN_PERIOD_TICKS ||
+        ticks_per_ms == 0u || duration_ms > UINT32_MAX / ticks_per_ms) return;
+    const uint32_t duration_ticks = ticks_per_ms * duration_ms;
+
+    TimerLoadSet(TIMER5_BASE, TIMER_A, half_period_ticks - 1u);
+    TimerLoadSet(TIMER4_BASE, TIMER_A, duration_ticks - 1u);
+    TimerIntEnable(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
+    TimerIntEnable(TIMER4_BASE, TIMER_TIMA_TIMEOUT);
+    IntEnable(INT_TIMER5A);
+    IntEnable(INT_TIMER4A);
+    IntMasterEnable();
+    TimerEnable(TIMER4_BASE, TIMER_A);
     TimerEnable(TIMER5_BASE, TIMER_A);
 }
 

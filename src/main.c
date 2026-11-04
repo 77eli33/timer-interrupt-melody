@@ -1,112 +1,79 @@
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define PART_TM4C129ENCPDT
-#include "inc/hw_ints.h"
-#include "inc/hw_memmap.h"
-#include "driverlib/gpio.h"
 #include "driverlib/interrupt.h"
 #include "driverlib/sysctl.h"
 #include "driverlib/systick.h"
-#include "driverlib/timer.h"
+
 #include "buttons.h"
 #include "melodies.h"
 #include "tone.h"
 
+/*
+ * Application control stays in the main loop. SysTick supplies a millisecond
+ * clock for button polling, while tone.c uses two hardware timers to play a
+ * note without blocking that loop.
+ */
 #define SYSTEM_CLOCK_HZ 120000000u
 #define MILLISECONDS_PER_SECOND 1000u
 #define MELODY_COUNT (sizeof(melodies) / sizeof(melodies[0]))
-#define BUZZER_PORT GPIO_PORTG_BASE
-#define BUZZER_PIN GPIO_PIN_1
 
-uint32_t system_clock_hz;
+// The SysTick ISR writes this value; buttons_poll() reads it in main().
 static volatile uint32_t milliseconds;
 
-extern uint32_t _estack, _sidata, _sdata, _edata, _sbss, _ebss;
-int main(void);
-void Reset_Handler(void);
-void SysTick_Handler(void);
-static void TestTimer5A_Handler(void);
-static void Default_Handler(void) { while (1) {} }
-
-__attribute__((section(".isr_vector"), used))
-const uintptr_t vectors[] = {
-    [0] = (uintptr_t)&_estack,
-    [1] = (uintptr_t)Reset_Handler,
-    [2] = (uintptr_t)Default_Handler,
-    [3] = (uintptr_t)Default_Handler,
-    [4] = (uintptr_t)Default_Handler,
-    [5] = (uintptr_t)Default_Handler,
-    [6] = (uintptr_t)Default_Handler,
-    [11] = (uintptr_t)Default_Handler,
-    [12] = (uintptr_t)Default_Handler,
-    [14] = (uintptr_t)Default_Handler,
-    [15] = (uintptr_t)SysTick_Handler,
-    [INT_TIMER4A] = (uintptr_t)ToneDuration_Handler,
-    [INT_TIMER5A] = (uintptr_t)TestTimer5A_Handler
-};
-
-void Reset_Handler(void) {
-    for (uint32_t *dst = &_sdata, *src = &_sidata; dst < &_edata; ) *dst++ = *src++;
-    for (uint32_t *dst = &_sbss; dst < &_ebss; ) *dst++ = 0;
-    (void)main();
-    while (1) {}
-}
-
-static void TestTimer5A_Handler(void) {
-    TimerIntClear(TIMER5_BASE, TIMER_TIMA_TIMEOUT);
-    const uint8_t level = (uint8_t)GPIOPinRead(BUZZER_PORT, BUZZER_PIN);
-    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, level ^ BUZZER_PIN);
-}
-
+// One interrupt per millisecond; note length is timed by Timer4A instead.
 void SysTick_Handler(void) {
     ++milliseconds;
 }
 
 int main(void) {
-    system_clock_hz = SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |
-                                        SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,
-                                        SYSTEM_CLOCK_HZ);
+    // Configure the PLL and use the frequency actually returned by TivaWare
+    // when calculating the SysTick and tone-timer periods.
+    const uint32_t system_clock_hz =
+        SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |
+                           SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,
+                           SYSTEM_CLOCK_HZ);
+    // A zero return means the requested system clock could not be set.
     if (system_clock_hz == 0u) while (1) {}
 
-    // GPIO und Timer initialisieren
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOG);
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER4);
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER5);
-    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOG) ||
-           !SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER4) ||
-           !SysCtlPeripheralReady(SYSCTL_PERIPH_TIMER5)) {}
-
-    GPIOPinTypeGPIOOutput(BUZZER_PORT, BUZZER_PIN);
-    GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0u);
-
-    // Timer für Frequenz und Dauer konfigurieren
-    TimerClockSourceSet(TIMER5_BASE, TIMER_CLOCK_SYSTEM);
-    TimerConfigure(TIMER5_BASE, TIMER_CFG_PERIODIC);
-    TimerClockSourceSet(TIMER4_BASE, TIMER_CLOCK_SYSTEM);
-    TimerConfigure(TIMER4_BASE, TIMER_CFG_ONE_SHOT);
-
+    // Each module enables and configures its own BoosterPack pins and timers.
     buttons_init();
+    tone_init(system_clock_hz);
+
+    // A 1 ms SysTick lets buttons_poll() sample the active-low buttons
+    // every 5 ms without using button interrupts.
     SysTickPeriodSet(system_clock_hz / MILLISECONDS_PER_SECOND);
     SysTickIntEnable();
     SysTickEnable();
+    // Enable CPU interrupts only after all peripherals and SysTick are ready.
     IntMasterEnable();
 
+    // Selection may change during playback; active_melody keeps the melody
+    // already playing until it ends or S2 stops it.
     size_t selected_melody = 0u;
     const Melody *active_melody = NULL;
+    // Last note index launched by main(); note_index is advanced in Timer4A.
     uint32_t started_index = 0u;
 
     while (1) {
+        // buttons_poll() returns press events, not a continuously held state.
+        // Process S1 first if both events arrive in the same iteration.
         const uint32_t pressed = buttons_poll(milliseconds);
         if ((pressed & BUTTON_S1_PRESSED) != 0u) {
+            // S1 selects the next melody for the next start. A melody that
+            // is already playing continues until S2 stops it or it ends.
             selected_melody = (selected_melody + 1u) % MELODY_COUNT;
         }
 
         if ((pressed & BUTTON_S2_PRESSED) != 0u) {
+            // S2 toggles playback. Starting always begins at the first note.
             if (active_melody != NULL) {
+                // Zero duration cancels both timers and drives PG1 low.
                 tone(0u, 0u);
                 active_melody = NULL;
             } else {
+                // Cancel any pending timeout before resetting the shared
+                // counter and starting the selected melody at note zero.
                 tone(0u, 0u);
                 note_index = 0u;
                 started_index = 0u;
@@ -117,11 +84,16 @@ int main(void) {
         }
 
         if (active_melody != NULL && note_index != started_index) {
+            // Timer4A increments note_index when the current note ends.
+            // The main loop starts the next note outside the ISR, so button
+            // polling and melody transitions share one control path.
             started_index = note_index;
             if (started_index < active_melody->length) {
                 tone(active_melody->notes[started_index].frequency_hz,
                      active_melody->notes[started_index].duration_ms);
             } else {
+                // After the final note, leave the output low and mark the
+                // player idle so the next S2 press restarts from the start.
                 tone(0u, 0u);
                 active_melody = NULL;
             }

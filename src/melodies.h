@@ -4,17 +4,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * Melody data stays separate from playback control. The timer module reads
+ * each pair as a frequency in hertz and a duration in milliseconds. A zero
+ * frequency with a positive duration is a timed rest.
+ */
 typedef struct {
     uint32_t frequency_hz;
     uint32_t duration_ms;
 } MelodyNote;
 
+// The explicit length lets main() stop before reading past the note array.
 typedef struct {
     const MelodyNote *notes;
     size_t length;
 } Melody;
 
-// Super Mario Bros. (NES) course-clear fanfare, one octave up for the buzzer.
+// Melody 1: an approximate, single-voice NES course-clear fanfare. The
+// arpeggios are one octave above the transcription for audible buzzer notes;
+// the note durations were later lengthened by 20 percent.
 static const MelodyNote melody_mario_course_clear[] = {
     // C/G arpeggio
     {392u, 132u}, {523u, 132u}, {659u, 132u}, {784u, 132u},
@@ -30,11 +38,23 @@ static const MelodyNote melody_mario_course_clear[] = {
     {1865u, 192u}, {2093u, 720u}
 };
 
-static const MelodyNote melody_descending[] = {
-    {2093u, 200u}, {1760u, 200u}, {1397u, 200u}, {1047u, 500u}
+// Melody 2: default Microsoft Teams incoming-call ringtone, reduced from
+// its multi-voice audio to the upper notes that one buzzer can reproduce.
+// The B-flat and F notes are one octave above the audio reference so the
+// passive buzzer can reproduce them clearly. Zero hertz marks a timed rest.
+static const MelodyNote melody_teams_ring[] = {
+    // First ring phrase: B-flat, B-flat, B-flat, F, B-flat, B-flat.
+    {932u, 300u}, {0u, 400u}, {932u, 300u}, {0u, 150u},
+    {932u, 250u}, {0u, 200u}, {1397u, 160u}, {0u, 100u},
+    {932u, 300u}, {0u, 400u}, {932u, 300u}, {0u, 690u},
+    // The original ringtone repeats the phrase once.
+    {932u, 300u}, {0u, 400u}, {932u, 300u}, {0u, 150u},
+    {932u, 250u}, {0u, 200u}, {1397u, 160u}, {0u, 100u},
+    {932u, 300u}, {0u, 400u}, {932u, 300u}
 };
 
-// Four 4/4 bars at 108 BPM (8889 ms total, rounded to whole milliseconds).
+// Melody 3: four 4/4 bars of a simplified Last Christmas refrain at 108 BPM.
+// Durations are rounded to milliseconds (8889 ms total).
 static const MelodyNote melody_last_christmas[] = {
     // Bar 1
     {1319u, 833u}, {1319u, 278u}, {1175u, 1111u},
@@ -49,11 +69,13 @@ static const MelodyNote melody_last_christmas[] = {
     {1109u, 278u}, {988u, 1111u}
 };
 
+// Compute each array's element count at compile time; no sentinel is needed.
 #define MELODY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 
+// S1 cycles through these entries in order; S2 plays the selected entry.
 static const Melody melodies[] = {
     {melody_mario_course_clear, MELODY_LENGTH(melody_mario_course_clear)},
-    {melody_descending, MELODY_LENGTH(melody_descending)},
+    {melody_teams_ring, MELODY_LENGTH(melody_teams_ring)},
     {melody_last_christmas, MELODY_LENGTH(melody_last_christmas)}
 };
 

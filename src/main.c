@@ -15,6 +15,7 @@
 
 #define SYSTEM_CLOCK_HZ 120000000u
 #define MILLISECONDS_PER_SECOND 1000u
+#define MELODY_COUNT (sizeof(melodies) / sizeof(melodies[0]))
 #define BUZZER_PORT GPIO_PORTG_BASE
 #define BUZZER_PIN GPIO_PIN_1
 
@@ -91,27 +92,38 @@ int main(void) {
     SysTickEnable();
     IntMasterEnable();
 
+    size_t selected_melody = 0u;
+    const Melody *active_melody = NULL;
     uint32_t started_index = 0u;
-    bool playing = false;
-    const Melody *test_melody = &melodies[0];
 
     while (1) {
         const uint32_t pressed = buttons_poll(milliseconds);
         if ((pressed & BUTTON_S1_PRESSED) != 0u) {
-            tone(0u, 0u);
-            note_index = 0u;
-            started_index = 0u;
-            playing = true;
-            tone(test_melody->notes[0].frequency_hz,
-                 test_melody->notes[0].duration_ms);
-        } else if (playing && note_index != started_index) {
-            started_index = note_index;
-            if (started_index < test_melody->length) {
-                tone(test_melody->notes[started_index].frequency_hz,
-                     test_melody->notes[started_index].duration_ms);
-            } else {
-                playing = false;
+            selected_melody = (selected_melody + 1u) % MELODY_COUNT;
+        }
+
+        if ((pressed & BUTTON_S2_PRESSED) != 0u) {
+            if (active_melody != NULL) {
                 tone(0u, 0u);
+                active_melody = NULL;
+            } else {
+                tone(0u, 0u);
+                note_index = 0u;
+                started_index = 0u;
+                active_melody = &melodies[selected_melody];
+                tone(active_melody->notes[0].frequency_hz,
+                     active_melody->notes[0].duration_ms);
+            }
+        }
+
+        if (active_melody != NULL && note_index != started_index) {
+            started_index = note_index;
+            if (started_index < active_melody->length) {
+                tone(active_melody->notes[started_index].frequency_hz,
+                     active_melody->notes[started_index].duration_ms);
+            } else {
+                tone(0u, 0u);
+                active_melody = NULL;
             }
         }
     }

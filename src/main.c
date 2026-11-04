@@ -10,22 +10,13 @@
 #include "driverlib/systick.h"
 #include "driverlib/timer.h"
 #include "buttons.h"
+#include "melodies.h"
 #include "tone.h"
 
 #define SYSTEM_CLOCK_HZ 120000000u
 #define MILLISECONDS_PER_SECOND 1000u
-#define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 #define BUZZER_PORT GPIO_PORTG_BASE
 #define BUZZER_PIN GPIO_PIN_1
-
-typedef struct {
-    uint32_t frequency_hz;
-    uint32_t duration_ms;
-} MelodyNote;
-
-static const MelodyNote test_melody[] = {
-    {1047u, 250u}, {1319u, 250u}, {1568u, 250u}, {2093u, 500u}
-};
 
 uint32_t system_clock_hz;
 static volatile uint32_t milliseconds;
@@ -102,6 +93,7 @@ int main(void) {
 
     uint32_t started_index = 0u;
     bool playing = false;
+    const Melody *test_melody = &melodies[0];
 
     while (1) {
         const uint32_t pressed = buttons_poll(milliseconds);
@@ -110,12 +102,13 @@ int main(void) {
             note_index = 0u;
             started_index = 0u;
             playing = true;
-            tone(test_melody[0].frequency_hz, test_melody[0].duration_ms);
+            tone(test_melody->notes[0].frequency_hz,
+                 test_melody->notes[0].duration_ms);
         } else if (playing && note_index != started_index) {
             started_index = note_index;
-            if (started_index < ARRAY_LENGTH(test_melody)) {
-                tone(test_melody[started_index].frequency_hz,
-                     test_melody[started_index].duration_ms);
+            if (started_index < test_melody->length) {
+                tone(test_melody->notes[started_index].frequency_hz,
+                     test_melody->notes[started_index].duration_ms);
             } else {
                 playing = false;
                 tone(0u, 0u);

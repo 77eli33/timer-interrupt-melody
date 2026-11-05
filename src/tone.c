@@ -1,7 +1,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PART_TM4C129ENCPDT
+#ifndef PART_TM4C129ENCPDT
+#define PART_TM4C129ENCPDT  // also set by the CCS project
+#endif
 #include "inc/hw_ints.h"
 #include "inc/hw_memmap.h"
 #include "driverlib/gpio.h"

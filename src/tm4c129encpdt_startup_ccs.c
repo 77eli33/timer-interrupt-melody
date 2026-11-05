@@ -65,7 +65,9 @@ extern void ToneDuration_Handler(void);  // tone.c: note duration (next note)
 // the program if located at a start address other than 0.
 //
 //*****************************************************************************
-#pragma DATA_SECTION(g_pfnVectors, ".intvecs")
+// Placed at address 0 by the linker command file (.intvecs). The attribute
+// works with TI Arm Clang (CCS default) as well as the legacy TI compiler.
+__attribute__((section(".intvecs"), used))
 void (* const g_pfnVectors[])(void) =
 {
     (void (*)(void))((uint32_t)&__STACK_TOP),
@@ -218,8 +220,7 @@ ResetISR(void)
     // Jump to the CCS C initialization routine.  This will enable the
     // floating-point unit as well, so that does not need to be done here.
     //
-    __asm("    .global _c_int00\n"
-          "    b.w     _c_int00");
+    _c_int00();
 }
 
 //*****************************************************************************

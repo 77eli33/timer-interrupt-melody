@@ -7,6 +7,7 @@
  *****************************************************************************/
 
 --retain=g_pfnVectors
+--stack_size=1024
 
 MEMORY
 {
@@ -31,6 +32,7 @@ SECTIONS
     .intvecs:   > 0x00000000
     .text   :   > FLASH
     .const  :   > FLASH
+    .rodata :   > FLASH
     .cinit  :   > FLASH
     .pinit  :   > FLASH
     .init_array : > FLASH
@@ -42,4 +44,4 @@ SECTIONS
     .stack  :   > SRAM
 }
 
-__STACK_TOP = __stack + 512;
+__STACK_TOP = __stack + 1024;

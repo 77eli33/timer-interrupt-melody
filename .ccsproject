@@ -6,9 +6,7 @@
 	<deviceFamily value="TMS470"/>
 	<connection value="common/targetdb/connections/Stellaris_ICDI_Connection.xml"/>
 	<createSlaveProjects value=""/>
-	<templateProperties value="id=com.ti.ccs.project.emptyProjectWithMainTemplate"/>
 	<activeTargetConfiguration value="targetConfigs/Tiva TM4C129ENCPDT.ccxml"/>
 	<isTargetConfigurationManual value="false"/>
-	<origin value="project-wizard"/>
-	<filesToOpen value="main.c"/>
+	<filesToOpen value="src/main.c"/>
 </projectOptions>

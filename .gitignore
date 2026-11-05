@@ -1,5 +1,6 @@
-# Track only source files and this ignore file.
-*
-!/.gitignore
-!/src/
-!/src/**
+# Build output of Code Composer Studio
+Debug/
+Release/
+.clangd/
+.cache/
+*.bak-*
